@@ -9,7 +9,6 @@ from hummingbot.core.data_type.order_book import OrderBook
 from hummingbot.core.data_type.order_candidate import OrderCandidate
 from hummingbot.core.event.event_forwarder import SourceInfoEventForwarder
 from hummingbot.core.event.events import OrderBookEvent, OrderBookTradeEvent
-from hummingbot.core.utils.async_utils import safe_ensure_future
 from hummingbot.strategy.script_strategy_base import ScriptStrategyBase
 
 
@@ -89,8 +88,8 @@ class DynamicPriceCeilingFloorPMM(ScriptStrategyBase):
                      order_type=order.order_type, price=order.price)
 
     def cancel_all_orders(self):
-        for exchange in self.connectors.values():
-            safe_ensure_future(exchange.cancel_all(timeout_seconds=5))
+        for order in self.get_active_orders(self.exchange):
+            self.cancel(self.exchange, trading_pair=self.trading_pair, order_id=order.client_order_id)
 
     def is_the_proposal_inside_the_bounds(self, proposal):
         if len(self.sell_trades_buffer) > 0 or len(self.buy_trades_buffer) > 0:
