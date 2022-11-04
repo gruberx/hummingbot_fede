@@ -11,6 +11,14 @@ from hummingbot.strategy.script_strategy_base import ScriptStrategyBase
 
 
 class SimpleArbitrage(ScriptStrategyBase):
+    """
+    BotCamp Cohort: Sept 2022
+    Design Template: https://hummingbot-foundation.notion.site/Simple-Arbitrage-51b2af6e54b6493dab12e5d537798c07
+    Video: TBD
+    Description:
+    A simplified version of Hummingbot arbitrage strategy, this bot checks the Volume Weighted Average Price for
+    bid and ask in two exchanges and if it finds a profitable opportunity, it will trade the tokens.
+    """
     order_amount = Decimal("0.01")  # in base asset
     min_profitability = Decimal("0.002")  # in percentage
     base = "ETH"
