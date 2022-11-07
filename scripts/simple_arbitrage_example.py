@@ -99,20 +99,20 @@ class SimpleArbitrage(ScriptStrategyBase):
                 {
                     "quote_diff": buy_a_sell_b_quote,
                     "base_diff": buy_a_sell_b_base,
-                    "diff_pct": buy_a_sell_b_base / self.order_amount
+                    "profitability_pct": buy_a_sell_b_base / self.order_amount
                 },
             "buy_b_sell_a":
                 {
                     "quote_diff": buy_b_sell_a_quote,
                     "base_diff": buy_b_sell_a_base,
-                    "diff_pct": buy_b_sell_a_base / self.order_amount
+                    "profitability_pct": buy_b_sell_a_base / self.order_amount
                 },
         }
 
     def check_profitability_and_create_proposal(self, vwap_prices: Dict[str, Any]) -> Dict:
         proposal = {}
         profitability_analysis = self.get_profitability_analysis(vwap_prices)
-        if profitability_analysis["buy_a_sell_b"]["diff_pct"] > self.min_profitability:
+        if profitability_analysis["buy_a_sell_b"]["profitability_pct"] > self.min_profitability:
             # This means that the ask of the first exchange is lower than the bid of the second one
             proposal[self.exchange_A] = OrderCandidate(trading_pair=self.trading_pair, is_maker=False,
                                                        order_type=OrderType.MARKET,
@@ -122,7 +122,7 @@ class SimpleArbitrage(ScriptStrategyBase):
                                                        order_type=OrderType.MARKET,
                                                        order_side=TradeType.SELL, amount=Decimal(self.order_amount),
                                                        price=vwap_prices[self.exchange_B]["bid"])
-        elif profitability_analysis["buy_b_sell_a"]["diff_pct"] > self.min_profitability:
+        elif profitability_analysis["buy_b_sell_a"]["profitability_pct"] > self.min_profitability:
             # This means that the ask of the second exchange is lower than the bid of the first one
             proposal[self.exchange_B] = OrderCandidate(trading_pair=self.trading_pair, is_maker=False,
                                                        order_type=OrderType.MARKET,
@@ -174,11 +174,11 @@ class SimpleArbitrage(ScriptStrategyBase):
             "     Buy A --> Sell B"] + [
             f"          Quote Diff: {profitability_analysis['buy_a_sell_b']['quote_diff']:.7f}"] + [
             f"          Base Diff: {profitability_analysis['buy_a_sell_b']['base_diff']:.7f}"] + [
-            f"          Percentage: {profitability_analysis['buy_a_sell_b']['diff_pct'] * 100:.4f} %"] + [
+            f"          Percentage: {profitability_analysis['buy_a_sell_b']['profitability_pct'] * 100:.4f} %"] + [
             "     Buy B --> Sell A"] + [
             f"          Quote Diff: {profitability_analysis['buy_b_sell_a']['quote_diff']:.7f}"] + [
             f"          Base Diff: {profitability_analysis['buy_b_sell_a']['base_diff']:.7f}"] + [
-            f"          Percentage: {profitability_analysis['buy_b_sell_a']['diff_pct'] * 100:.4f} %"
+            f"          Percentage: {profitability_analysis['buy_b_sell_a']['profitability_pct'] * 100:.4f} %"
         ])
 
         warning_lines.extend(self.balance_warning(self.get_market_trading_pair_tuples()))
