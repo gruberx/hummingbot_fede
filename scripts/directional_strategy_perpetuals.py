@@ -316,14 +316,14 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
     def get_signal(self):
         return Signal(
             id=420,
-            timestamp=1247812934,
+            timestamp=datetime.datetime.now().timestamp(),
             value=0.9,
             trading_pair="ETH-USDT",
             exchange="binance_perpetual_testnet",
             position_config=PositionConfig(
                 stop_loss=Decimal(0.03),
                 take_profit=Decimal(0.03),
-                time_limit=300,
+                time_limit=30,
                 order_type=OrderType.MARKET,
                 price=Decimal(1400),
                 amount=Decimal(1),
@@ -407,19 +407,24 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
             lines.extend(["", "  No active positions."])
 
         for executor in self.signal_executors:
+            lines.extend(["-------------------------------||-------------------------------"])
+            lines.extend(["-------------------------------||-------------------------------"])
             current_price = self.connectors[executor.signal.exchange].get_mid_price(executor.signal.trading_pair)
+            lines.extend([f"  Current price: {current_price}"])
             lines.extend(["", f"  Signal: {executor.signal.id}"] +
                          [f"            - Value: {executor.signal.value}"] +
                          [f"            - Trading Pair: {executor.signal.trading_pair}"] +
                          [f"            - Side: {executor.signal.position_config.side}"] +
                          [f"            - Status: {executor.status}"] +
                          [f"            - Exchange: {executor.signal.exchange}"])
+            lines.extend(["-------------------------------||-------------------------------"])
+
             if executor.open_order:
                 lines.extend([f"        - Open Order: {executor.open_order_id}"] +
                              [f"                    - Entry price: {executor.open_order['average_executed_price']}"] +
                              [f"                    - Amount: {executor.open_order['amount']}"])
+            lines.extend(["-------------------------------||-------------------------------"])
 
-            lines.extend([f"        - Current price: {current_price}"])
             if executor.take_profit_order:
                 lines.extend([f"        - Take Profit Order: {executor.take_profit_order_id}"] +
                              [f"                    - Price: {executor.take_profit_order.price:.2f}"] +
@@ -430,13 +435,16 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
                              [f"                    - Percentage: {100 * executor.signal.position_config.take_profit:.2f} %"] +
                              [f"                    - Distance from mid price: {100 * (executor.take_profit_order.price - current_price) / current_price:.2f} %"]
                              )
+            lines.extend(["-------------------------------||-------------------------------"])
+
             if executor.stop_loss_price != 0:
                 lines.extend(
                     ["        - Stop Loss:"] +
-                    [f"                    - Price: {executor.stop_loss_price}"] +
-                    [f"                    - Percentage: {100 * executor.signal.position_config.stop_loss} %"] +
+                    [f"                    - Price: {executor.stop_loss_price:.2f}"] +
+                    [f"                    - Percentage: {100 * executor.signal.position_config.stop_loss:.2f} %"] +
                     [f"                    - Distance from mid price: {100 *(executor.stop_loss_price - current_price) / current_price:.2f} %"]
                 )
+            lines.extend(["-------------------------------||-------------------------------"])
             start_time = datetime.datetime.fromtimestamp(executor.signal.timestamp)
             duration = datetime.timedelta(seconds=executor.signal.position_config.time_limit)
             end_time = start_time + duration
@@ -449,6 +457,11 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
                 [f"                    - Duration: {duration}"] +
                 [f"                    - Seconds remaining: {seconds_remaining}"]
             )
+            bar = ['*' if (i < duration.seconds - seconds_remaining.seconds) else '-' for i in range(100)]
+            lines.extend(["Progress:"])
+
+            lines.extend(["".join(bar)])
+            lines.extend(["\n-------------------------------||-------------------------------"])
 
         warning_lines.extend(self.balance_warning(self.get_market_trading_pair_tuples()))
         if len(warning_lines) > 0:

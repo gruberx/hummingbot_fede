@@ -73,9 +73,9 @@ class StatusCommand:
         app_warning = self.application_warning()
         app_warning = "" if app_warning is None else app_warning
         if asyncio.iscoroutinefunction(self.strategy.format_status):
-            st_status = await self.strategy.format_status()
+            st_status = await self.strategy.format_status
         else:
-            st_status = self.strategy.format_status()
+            st_status = self.strategy.format_status
         status = paper_trade + "\n" + st_status + "\n" + app_warning
         if self._pmm_script_iterator is not None and live is False:
             self._pmm_script_iterator.request_status()
