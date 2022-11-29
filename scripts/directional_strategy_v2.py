@@ -1,7 +1,7 @@
 import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Dict, List, Union
+from typing import List, Union
 
 import pandas as pd
 from pydantic import BaseModel
@@ -52,11 +52,13 @@ class SignalExecutorStatus(Enum):
     ORDER_PLACED = 2
     ACTIVE_POSITION = 3
     CLOSE_PLACED = 4
-    CLOSED = 5
+    CLOSED_BY_TIME_LIMIT = 5
+    CLOSED_BY_STOP_LOSS = 6
+    CLOSED_BY_TAKE_PROFIT = 7
 
 
 class TrackedOrder:
-    def __init__(self, order_id):
+    def __init__(self, order_id: str):
         self._order_id = order_id
         self._order = None
 
@@ -69,8 +71,7 @@ class TrackedOrder:
         return self._order
 
     @order.setter
-    def set_in_flight_order(self, order: InFlightOrder):
-        # TODO: add validations and logic if there is an error with the order
+    def order(self, order: InFlightOrder):
         self._order = order
 
 
@@ -79,12 +80,10 @@ class SignalExecutor:
         self._signal = signal
         self._strategy = strategy
         self._status: SignalExecutorStatus = SignalExecutorStatus.NOT_STARTED
-        self._open_order_info: Union[Dict, None] = None
         self._open_order: Union[TrackedOrder, None] = None
-        self._exit_order_id: Union[str, None] = None
-        self._take_profit_order_id: Union[str, None] = None
-        self._filled_amount: Decimal = Decimal("0")
-        self._average_price: Decimal = Decimal("0")
+        self._take_profit_order: Union[TrackedOrder, None] = None
+        self._time_limit_order: Union[TrackedOrder, None] = None
+        self._stop_loss_order: Union[TrackedOrder, None] = None
 
     @property
     def signal(self):
@@ -95,25 +94,8 @@ class SignalExecutor:
         return self._status
 
     @property
-    def open_order_id(self):
-        return self._open_order_id
-
-    @property
-    def exit_order_id(self):
-        return self._exit_order_id
-
-    @property
-    def take_profit_order_id(self):
-        return self._take_profit_order_id
-
-    @property
     def connector(self) -> ConnectorBase:
         return self._strategy.connectors[self._signal.exchange]
-
-    def set_open_order_info(self, order: InFlightOrder):
-        order_json = order.to_json()
-        order_json["average_executed_price"] = order.average_executed_price
-        self._open_order_info = order_json
 
     def change_status(self, status: SignalExecutorStatus):
         self._status = status
@@ -128,24 +110,15 @@ class SignalExecutor:
 
     @property
     def take_profit_order(self):
-        return self.get_order(self._take_profit_order_id)
+        return self._take_profit_order
 
     @property
-    def exit_profit_order(self):
-        # TODO: split on sl order and tl order
-        return self.get_order(self._exit_order_id)
+    def stop_loss_order(self):
+        return self._stop_loss_order
 
-    def get_filled_amount(self, order_id: str):
-        order = self.get_order(order_id)
-        if order:
-            self._filled_amount = order.executed_amount_base
-        return self._filled_amount
-
-    def get_average_price(self, order_id: str):
-        order = self.get_order(order_id)
-        if order:
-            self._average_price = order.average_executed_price
-        return self._average_price
+    @property
+    def time_limit_order(self):
+        return self._time_limit_order
 
     def control_position(self):
         if self.status == SignalExecutorStatus.NOT_STARTED:
@@ -163,7 +136,7 @@ class SignalExecutor:
         self._strategy.cancel(
             connector_name=self._signal.exchange,
             trading_pair=self._signal.trading_pair,
-            order_id=self._take_profit_order_id
+            order_id=self._take_profit_order.order_id
         )
         self._strategy.logger().info("Removing take profit since the position is not longer available")
 
@@ -188,13 +161,13 @@ class SignalExecutor:
             self._strategy.cancel(
                 connector_name=self._signal.exchange,
                 trading_pair=self._signal.trading_pair,
-                order_id=self._open_order.order.client_order_id
+                order_id=self._open_order.order_id
             )
             self._strategy.logger().info(f"Signal id {self._signal.id}: Canceling limit order by time limit")
 
     def control_take_profit(self):
-        if not self._take_profit_order_id:
-            price = self.get_average_price(self._open_order.order.client_order_id)
+        if not self._take_profit_order:
+            entry_price = self.open_order.order.average_executed_price
             if self._signal.position_config.side == PositionSide.LONG:
                 tp_multiplier = 1 + self._signal.position_config.take_profit
             else:
@@ -202,35 +175,32 @@ class SignalExecutor:
             order_id = self._strategy.place_order(
                 connector_name=self._signal.exchange,
                 trading_pair=self._signal.trading_pair,
-                amount=self.get_filled_amount(self._open_order.order.client_order_id),
-                price=price * tp_multiplier,
+                amount=self.open_order.order.executed_amount_base,
+                price=entry_price * tp_multiplier,
                 order_type=OrderType.LIMIT,
                 position_action=PositionAction.CLOSE,
                 position_side=PositionSide.LONG if self._signal.position_config.side == PositionSide.SHORT else PositionSide.SHORT
             )
-            self._take_profit_order_id = order_id
+            self._take_profit_order = TrackedOrder(order_id)
             self._strategy.logger().info(f"Signal id {self._signal.id}: Placing take profit")
             return
         else:
-            self.ask_order_status(self._take_profit_order_id)
+            self.ask_order_status(self._take_profit_order)
 
     @property
     def stop_loss_price(self):
-        entry_price = self.get_average_price(self._open_order.order.client_order_id)
         stop_loss_price = 0
-        if entry_price:
-            # TODO: extract logic to get stop loss price by using the order candidate
+        if self.open_order and self.open_order.order:
             if self._signal.position_config.side == PositionSide.LONG:
-                stop_loss_price = entry_price * (1 - self._signal.position_config.stop_loss)
+                stop_loss_price = self.open_order.order.average_executed_price * (1 - self._signal.position_config.stop_loss)
             else:
-                stop_loss_price = entry_price * (1 + self._signal.position_config.stop_loss)
+                stop_loss_price = self.open_order.order.average_executed_price * (1 + self._signal.position_config.stop_loss)
         return stop_loss_price
 
     def control_stop_loss(self):
-        entry_price = self.get_average_price(self._open_order.order.client_order_id)
+        entry_price = self.open_order.order.average_executed_price
         current_price = self.connector.get_mid_price(self._signal.trading_pair)
         trigger_stop_loss = False
-        # TODO: extract logic to get stop loss price by using the order candidate
         if self._signal.position_config.side == PositionSide.LONG:
             stop_loss_price = entry_price * (1 - self._signal.position_config.stop_loss)
             if current_price <= stop_loss_price:
@@ -241,42 +211,42 @@ class SignalExecutor:
                 trigger_stop_loss = True
 
         if trigger_stop_loss:
-            if not self._exit_order_id:
+            if not self._stop_loss_order:
                 order_id = self._strategy.place_order(
                     connector_name=self._signal.exchange,
                     trading_pair=self._signal.trading_pair,
-                    amount=self.get_filled_amount(self._open_order.order.client_order_id),
+                    amount=self.open_order.order.executed_amount_base,
                     price=current_price,
                     order_type=OrderType.MARKET,
                     position_action=PositionAction.CLOSE,
                     position_side=PositionSide.LONG if self._signal.position_config.side == PositionSide.SHORT else PositionSide.SHORT
                 )
-                self._exit_order_id = order_id
+                self._stop_loss_order = TrackedOrder(order_id)
                 # TODO: Change logic to check the status of the take profit order
                 self._status = SignalExecutorStatus.CLOSE_PLACED
             else:
-                self.ask_order_status(self._exit_order_id)
+                self.ask_order_status(self._stop_loss_order)
 
     def control_position_time_limit(self):
         end_time = self._signal.timestamp + self._signal.position_config.time_limit
         position_expired = end_time < self._strategy.current_timestamp
         if position_expired:
-            if not self._exit_order_id:
+            if not self._time_limit_order:
                 price = self.connector.get_mid_price(self._signal.trading_pair)
                 order_id = self._strategy.place_order(
                     connector_name=self._signal.exchange,
                     trading_pair=self._signal.trading_pair,
-                    amount=self.get_filled_amount(self._open_order.order.client_order_id),
+                    amount=self.open_order.order.executed_amount_base,
                     price=price,
                     order_type=OrderType.MARKET,
                     position_action=PositionAction.CLOSE,
                     position_side=PositionSide.LONG if self._signal.position_config.side == PositionSide.SHORT else PositionSide.SHORT
                 )
-                self._exit_order_id = order_id
+                self._time_limit_order = TrackedOrder(order_id)
                 self._status = SignalExecutorStatus.CLOSE_PLACED
                 self._strategy.logger().info(f"Signal id {self._signal.id}: Closing position by time limit")
             else:
-                self.ask_order_status(self._exit_order_id)
+                self.ask_order_status(self._time_limit_order)
 
     def ask_order_status(self, order_id):
         pass
@@ -295,7 +265,18 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
     markets = {"binance_perpetual_testnet": {"ETH-USDT"}}
 
     def get_active_executors(self):
-        return [executor for executor in self.signal_executors if executor._status != SignalExecutorStatus.CLOSED]
+        return [executor for executor in self.signal_executors if executor.status not in
+                [SignalExecutorStatus.CLOSED_BY_TIME_LIMIT,
+                 SignalExecutorStatus.CLOSED_BY_TAKE_PROFIT,
+                 SignalExecutorStatus.CLOSED_BY_STOP_LOSS]
+                ]
+
+    def get_closed_executors(self):
+        return [executor for executor in self.signal_executors if executor.status in
+                [SignalExecutorStatus.CLOSED_BY_TIME_LIMIT,
+                 SignalExecutorStatus.CLOSED_BY_TAKE_PROFIT,
+                 SignalExecutorStatus.CLOSED_BY_STOP_LOSS]
+                ]
 
     def get_active_positions_df(self):
         active_positions = []
@@ -335,11 +316,11 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
             position_config=PositionConfig(
                 stop_loss=Decimal(0.03),
                 take_profit=Decimal(0.03),
-                time_limit=120,
+                time_limit=30,
                 order_type=OrderType.MARKET,
                 price=Decimal(1400),
                 amount=Decimal(1),
-                side=PositionSide.SHORT,
+                side=PositionSide.LONG,
             ),
         )
 
@@ -365,18 +346,20 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
 
     def did_complete_order(self, event: Union[BuyOrderCompletedEvent, SellOrderCompletedEvent]):
         for executor in self.signal_executors:
-            if executor.open_order.client_order_id == event.order_id:
-                executor.set_open_order_info(executor.get_order(event.order_id))
+            if executor.open_order.order_id == event.order_id:
                 executor.change_status(SignalExecutorStatus.ACTIVE_POSITION)
-            elif executor.exit_order_id == event.order_id:
-                # TODO: Change logic to manage stop loss and time limit logic
-                self.logger().info("Closed by Stop loss or time limit")
+            elif executor.stop_loss_order and executor.stop_loss_order.order_id == event.order_id:
+                self.logger().info("Closed by Stop loss")
                 executor.remove_take_profit()
-                executor.change_status(SignalExecutorStatus.CLOSED)
-            elif executor.take_profit_order_id == event.order_id:
+                executor.change_status(SignalExecutorStatus.CLOSED_BY_STOP_LOSS)
+            elif executor.time_limit_order and executor.time_limit_order.order_id == event.order_id:
+                self.logger().info("Closed by Time Limit")
+                executor.remove_take_profit()
+                executor.change_status(SignalExecutorStatus.CLOSED_BY_TIME_LIMIT)
+            elif executor.take_profit_order.order_id == event.order_id:
                 self.logger().info("Closed by Take Profit")
                 executor.remove_take_profit()
-                executor.change_status(SignalExecutorStatus.CLOSED)
+                executor.change_status(SignalExecutorStatus.CLOSED_BY_TAKE_PROFIT)
 
     def did_create_buy_order(self, event: BuyOrderCreatedEvent):
         self.did_create_order(event)
@@ -387,12 +370,14 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
     def did_create_order(self, event: Union[BuyOrderCreatedEvent, SellOrderCreatedEvent]):
         for executor in self.signal_executors:
             if executor.open_order.order_id == event.order_id:
-                executor.open_order.set_in_flight_order(executor.get_order(event.order_id))
+                executor.open_order.order = executor.get_order(event.order_id)
                 executor.change_status(SignalExecutorStatus.ORDER_PLACED)
+            elif executor.take_profit_order.order_id == event.order_id:
+                executor.take_profit_order.order = executor.get_order(event.order_id)
 
     def did_fill_order(self, event: OrderFilledEvent):
         for executor in self.signal_executors:
-            if executor.open_order.client_order_id == event.order_id:
+            if executor.open_order.order_id == event.order_id:
                 executor.change_status(SignalExecutorStatus.ACTIVE_POSITION)
 
     def format_status(self) -> str:
@@ -423,6 +408,16 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
         else:
             lines.extend(["", "  No active positions."])
 
+        for executor in self.get_closed_executors():
+            lines.extend(["\n-------------------------------||-------------------------------"])
+            lines.extend(["", f"  Signal: {executor.signal.id}"] +
+                         [f"            - Value: {executor.signal.value}"] +
+                         [f"            - Trading Pair: {executor.signal.trading_pair}"] +
+                         [f"            - Side: {executor.signal.position_config.side}"] +
+                         [f"            - Exchange: {executor.signal.exchange}"] +
+                         [f"            - Status: {executor.status}"]
+                         )
+
         for executor in self.get_active_executors():
             lines.extend(["\n-------------------------------||-------------------------------"])
             current_price = self.connectors[executor.signal.exchange].get_mid_price(executor.signal.trading_pair)
@@ -431,74 +426,36 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
                          [f"            - Value: {executor.signal.value}"] +
                          [f"            - Trading Pair: {executor.signal.trading_pair}"] +
                          [f"            - Side: {executor.signal.position_config.side}"] +
-                         [f"            - Status: {executor.status}"] +
-                         [f"            - Exchange: {executor.signal.exchange}"])
-            # lines.extend(["-------------------------------||-------------------------------"])
+                         [f"            - Exchange: {executor.signal.exchange}"] +
+                         [f"            - Status: {executor.status}"]
+                         )
 
-            # if executor.open_order:
-            # lines.extend([f"\n        - Open Order: {executor.open_order_id}"] +
-            #              [f"                    - Entry price: {executor.open_order['average_executed_price']}"] +
-            #              [f"                    - Amount: {executor.open_order['amount']}"])
-            # lines.extend(["-------------------------------||-------------------------------"])
-
-            # if executor.take_profit_order:
-            #     take_profit_progress = (executor.take_profit_order.price - current_price) / current_price
-            # lines.extend([f"\n        - Take Profit Order: {executor.take_profit_order_id}"] +
-            #              [f"                    - Price: {executor.take_profit_order.price:.2f}"] +
-            #              [f"                    - Amount: {executor.take_profit_order.amount}"] +
-            #              # [f"                    - Entry price: {executor.take_profit_order.average_executed_price}"] +
-            #              # [f"                    - Executed amount base: {executor.take_profit_order.executed_amount_base}"] +
-            #              # [f"                    - Executed amount quote: {executor.take_profit_order.executed_amount_quote}"] +
-            #              [f"                    - Percentage: {100 * executor.signal.position_config.take_profit:.2f} %"] +
-            #              [f"                    - Distance from mid price: {100 * take_profit_progress:.2f} %"]
-            #              )
-            # lines.extend(["-------------------------------||-------------------------------"])
-
-            # if executor.stop_loss_price != 0:
-            #     stop_loss_progress = (executor.stop_loss_price - current_price) / current_price
-            # lines.extend(
-            #     ["\n        - Stop Loss:"] +
-            #     [f"                    - Price: {executor.stop_loss_price:.2f}"] +
-            #     [f"                    - Percentage: {100 * executor.signal.position_config.stop_loss:.2f} %"] +
-            #     [f"                    - Distance from mid price: {100 * stop_loss_progress:.2f} %"]
-            # )
-            # lines.extend(["-------------------------------||-------------------------------"])
             start_time = datetime.datetime.fromtimestamp(executor.signal.timestamp)
             duration = datetime.timedelta(seconds=executor.signal.position_config.time_limit)
             end_time = start_time + duration
             current_timestamp = datetime.datetime.fromtimestamp(self.current_timestamp)
             seconds_remaining = (end_time - current_timestamp)
-            # lines.extend(
-            #     ["\n        - Time Limit:"] +
-            #     # [f"                    - Start time: {start_time}"] +
-            #     # [f"                    - Current time: {current_timestamp}"] +
-            #     [f"                    - Duration: {duration}"] +
-            #     [f"                    - Seconds remaining: {seconds_remaining.seconds}"]
-            # )
 
             scale = 50
             time_progress = (duration.seconds - seconds_remaining.seconds) / duration.seconds
             time_bar = ['*' if i < scale * time_progress else '-' for i in range(scale)]
             lines.extend(["Time limit:\n"])
             lines.extend(["".join(time_bar)])
-            # lines.extend(["\n-------------------------------||-------------------------------\n"])
 
-            if executor.stop_loss_price != 0 and executor.take_profit_order:
+            if executor.stop_loss_price != 0 and executor.take_profit_order and executor.take_profit_order.order:
                 progress = 0
+                stop_loss_price = executor.stop_loss_price
                 if executor.signal.position_config.side == PositionSide.LONG:
-                    price_range = executor.take_profit_order.price - executor.stop_loss_price
-                    progress = (current_price - executor.stop_loss_price) / price_range
+                    price_range = executor.take_profit_order.order.price - stop_loss_price
+                    progress = (current_price - stop_loss_price) / price_range
                 elif executor.signal.position_config.side == PositionSide.SHORT:
-                    price_range = executor.stop_loss_price - executor.take_profit_order.price
-                    progress = (executor.stop_loss_price - current_price) / price_range
+                    price_range = stop_loss_price - executor.take_profit_order.order.price
+                    progress = (stop_loss_price - current_price) / price_range
                 price_bar = [f'--{current_price:.2f}--' if i == int(scale * progress) else '-' for i in range(scale)]
-                price_bar.insert(0, f"SL:{executor.stop_loss_price:.2f}")
-                price_bar.append(f"TP:{executor.take_profit_order.price:.2f}")
+                price_bar.insert(0, f"SL:{stop_loss_price:.2f}")
+                price_bar.append(f"TP:{executor.take_profit_order.order.price:.2f}")
                 lines.extend(["\nPosition progress:\n"])
                 lines.extend(["".join(price_bar)])
-                # lines.extend([f"--{executor.stop_loss_price:.2f}"] + ["".join(price_bar)] + [f"{executor.take_profit_order.price:.2f}--"])
-
-            # lines.extend(["\n-------------------------------||-------------------------------"])
 
         warning_lines.extend(self.balance_warning(self.get_market_trading_pair_tuples()))
         if len(warning_lines) > 0:
