@@ -42,8 +42,8 @@ class Signal(BaseModel):
 class BotProfile(BaseModel):
     balance_limit: Decimal
     max_order_amount: Decimal
-    take_profit_threshold: float
-    stop_loss_threshold: float
+    long_threshold: float
+    short_threshold: float
     leverage: float
 
 
@@ -222,7 +222,6 @@ class SignalExecutor:
                     position_side=PositionSide.LONG if self._signal.position_config.side == PositionSide.SHORT else PositionSide.SHORT
                 )
                 self._stop_loss_order = TrackedOrder(order_id)
-                # TODO: Change logic to check the status of the take profit order
                 self._status = SignalExecutorStatus.CLOSE_PLACED
             else:
                 self.ask_order_status(self._stop_loss_order)
@@ -256,8 +255,8 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
     bot_profile = BotProfile(
         balance_limit=Decimal(1000),
         max_order_amount=Decimal(20),
-        take_profit_threshold=0.8,
-        stop_loss_threshold=-0.8,
+        long_threshold=0.8,
+        short_threshold=-0.8,
         leverage=10,
     )
     max_executors = 1
@@ -296,7 +295,7 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
     def on_tick(self):
         if len(self.get_active_executors()) < self.max_executors:
             signal: Signal = self.get_signal()
-            if signal.value > self.bot_profile.take_profit_threshold or signal.value < self.bot_profile.stop_loss_threshold:
+            if signal.value > self.bot_profile.long_threshold or signal.value < self.bot_profile.short_threshold:
                 price = self.connectors[signal.exchange].get_mid_price(signal.trading_pair)
                 signal.position_config.amount = (self.bot_profile.max_order_amount / price) * signal.position_config.amount
                 self.signal_executors.append(SignalExecutor(
@@ -358,7 +357,6 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
                 executor.change_status(SignalExecutorStatus.CLOSED_BY_TIME_LIMIT)
             elif executor.take_profit_order.order_id == event.order_id:
                 self.logger().info("Closed by Take Profit")
-                executor.remove_take_profit()
                 executor.change_status(SignalExecutorStatus.CLOSED_BY_TAKE_PROFIT)
 
     def did_create_buy_order(self, event: BuyOrderCreatedEvent):
