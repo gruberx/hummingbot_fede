@@ -139,6 +139,10 @@ class BinancePerpetualDerivative(ExchangeBase, PerpetualTrading):
         return self._domain
 
     @property
+    def trading_pairs(self):
+        return self._trading_pairs
+
+    @property
     def order_books(self) -> Dict[str, OrderBook]:
         return self.order_book_tracker.order_books
 
