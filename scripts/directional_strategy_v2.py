@@ -52,7 +52,7 @@ class BotProfile(BaseModel):
     leverage: float
 
 
-class SignalExecutorStatus(Enum):
+class PositionExecutorStatus(Enum):
     NOT_STARTED = 1
     ORDER_PLACED = 2
     CANCELED_BY_TIME_LIMIT = 3
@@ -89,7 +89,7 @@ class PositionExecutor:
     def __init__(self, position_config: PositionConfig, strategy: ScriptStrategyBase):
         self._position_config = position_config
         self._strategy = strategy
-        self._status: SignalExecutorStatus = SignalExecutorStatus.NOT_STARTED
+        self._status: PositionExecutorStatus = PositionExecutorStatus.NOT_STARTED
         self._open_order: TrackedOrder = TrackedOrder()
         self._take_profit_order: TrackedOrder = TrackedOrder()
         self._time_limit_order: TrackedOrder = TrackedOrder()
@@ -104,7 +104,7 @@ class PositionExecutor:
         return self._status
 
     @status.setter
-    def status(self, status: SignalExecutorStatus):
+    def status(self, status: PositionExecutorStatus):
         self._status = status
 
     @property
@@ -125,9 +125,9 @@ class PositionExecutor:
 
     @property
     def entry_price(self):
-        if self.status in [SignalExecutorStatus.NOT_STARTED,
-                           SignalExecutorStatus.ORDER_PLACED,
-                           SignalExecutorStatus.CANCELED_BY_TIME_LIMIT]:
+        if self.status in [PositionExecutorStatus.NOT_STARTED,
+                           PositionExecutorStatus.ORDER_PLACED,
+                           PositionExecutorStatus.CANCELED_BY_TIME_LIMIT]:
             entry_price = self.position_config.entry_price
             price = entry_price if entry_price else self.connector.get_mid_price(self.trading_pair)
         else:
@@ -136,25 +136,25 @@ class PositionExecutor:
 
     @property
     def close_price(self):
-        if self.status == SignalExecutorStatus.CLOSED_BY_STOP_LOSS:
+        if self.status == PositionExecutorStatus.CLOSED_BY_STOP_LOSS:
             return self.stop_loss_order.order.average_executed_price
-        elif self.status == SignalExecutorStatus.CLOSED_BY_TAKE_PROFIT:
+        elif self.status == PositionExecutorStatus.CLOSED_BY_TAKE_PROFIT:
             return self.take_profit_order.order.average_executed_price
-        elif self.status == SignalExecutorStatus.CLOSED_BY_TIME_LIMIT:
+        elif self.status == PositionExecutorStatus.CLOSED_BY_TIME_LIMIT:
             return self.time_limit_order.order.average_executed_price
         else:
             return None
 
     @property
     def pnl(self):
-        if self.status in [SignalExecutorStatus.CLOSED_BY_TIME_LIMIT,
-                           SignalExecutorStatus.CLOSED_BY_STOP_LOSS,
-                           SignalExecutorStatus.CLOSED_BY_TAKE_PROFIT]:
+        if self.status in [PositionExecutorStatus.CLOSED_BY_TIME_LIMIT,
+                           PositionExecutorStatus.CLOSED_BY_STOP_LOSS,
+                           PositionExecutorStatus.CLOSED_BY_TAKE_PROFIT]:
             if self.side == PositionSide.LONG:
                 return (self.close_price - self.entry_price) / self.entry_price
             else:
                 return (self.entry_price - self.close_price) / self.entry_price
-        elif self.status == SignalExecutorStatus.ACTIVE_POSITION:
+        elif self.status == PositionExecutorStatus.ACTIVE_POSITION:
             current_price = self.connector.get_mid_price(self.trading_pair)
             if self.side == PositionSide.LONG:
                 return (current_price - self.entry_price) / self.entry_price
@@ -218,20 +218,20 @@ class PositionExecutor:
         return self._time_limit_order
 
     def control_position(self):
-        if self.status == SignalExecutorStatus.NOT_STARTED:
+        if self.status == PositionExecutorStatus.NOT_STARTED:
             self.control_open_order()
-        elif self.status == SignalExecutorStatus.ORDER_PLACED:
+        elif self.status == PositionExecutorStatus.ORDER_PLACED:
             self.control_cancel_order_by_time_limit()
-        elif self.status == SignalExecutorStatus.ACTIVE_POSITION:
+        elif self.status == PositionExecutorStatus.ACTIVE_POSITION:
             self.control_take_profit()
             self.control_stop_loss()
             self.control_time_limit()
-        elif self.status == SignalExecutorStatus.CLOSE_PLACED:
+        elif self.status == PositionExecutorStatus.CLOSE_PLACED:
             pass
 
     def clean_executor(self):
-        if self.status in [SignalExecutorStatus.CLOSED_BY_TIME_LIMIT,
-                           SignalExecutorStatus.CLOSED_BY_STOP_LOSS]:
+        if self.status in [PositionExecutorStatus.CLOSED_BY_TIME_LIMIT,
+                           PositionExecutorStatus.CLOSED_BY_STOP_LOSS]:
             if self.take_profit_order.order and (
                     self.take_profit_order.order.is_cancelled or
                     self.take_profit_order.order.is_pending_cancel_confirmation or
@@ -303,7 +303,7 @@ class PositionExecutor:
                     position_side=PositionSide.LONG if self.side == PositionSide.SHORT else PositionSide.SHORT
                 )
                 self._stop_loss_order.order_id = order_id
-                self._status = SignalExecutorStatus.CLOSE_PLACED
+                self._status = PositionExecutorStatus.CLOSE_PLACED
 
     def control_time_limit(self):
         position_expired = self.end_time < self._strategy.current_timestamp
@@ -320,28 +320,28 @@ class PositionExecutor:
                     position_side=PositionSide.LONG if self.side == PositionSide.SHORT else PositionSide.SHORT
                 )
                 self._time_limit_order.order_id = order_id
-                self._status = SignalExecutorStatus.CLOSE_PLACED
+                self._status = PositionExecutorStatus.CLOSE_PLACED
                 # self._strategy.logger().info(f"Signal id {self._position_config.id}: Closing position by time limit")
 
     def process_order_completed_event(self, event: Union[BuyOrderCompletedEvent, SellOrderCompletedEvent]):
         if self.open_order.order_id == event.order_id:
-            self.status = SignalExecutorStatus.ACTIVE_POSITION
+            self.status = PositionExecutorStatus.ACTIVE_POSITION
         elif self.stop_loss_order.order_id == event.order_id:
             self._strategy.logger().info("Closed by Stop loss")
             self.remove_take_profit()
-            self.status = SignalExecutorStatus.CLOSED_BY_STOP_LOSS
+            self.status = PositionExecutorStatus.CLOSED_BY_STOP_LOSS
         elif self.time_limit_order.order_id == event.order_id:
             self._strategy.logger().info("Closed by Time Limit")
             self.remove_take_profit()
-            self.status = SignalExecutorStatus.CLOSED_BY_TIME_LIMIT
+            self.status = PositionExecutorStatus.CLOSED_BY_TIME_LIMIT
         elif self.take_profit_order.order_id == event.order_id:
             self._strategy.logger().info("Closed by Take Profit")
-            self.status = SignalExecutorStatus.CLOSED_BY_TAKE_PROFIT
+            self.status = PositionExecutorStatus.CLOSED_BY_TAKE_PROFIT
 
     def process_order_created_event(self, event: Union[BuyOrderCreatedEvent, SellOrderCreatedEvent]):
         if self.open_order.order_id == event.order_id:
             self.open_order.order = self.get_order(event.order_id)
-            self.status = SignalExecutorStatus.ORDER_PLACED
+            self.status = PositionExecutorStatus.ORDER_PLACED
         elif self.take_profit_order.order_id == event.order_id:
             self.take_profit_order.order = self.get_order(event.order_id)
             self._strategy.logger().info("Take profit Created")
@@ -354,14 +354,14 @@ class PositionExecutor:
 
     def process_order_canceled_event(self, event: OrderCancelledEvent):
         if self.open_order.order_id == event.order_id:
-            self.status = SignalExecutorStatus.CANCELED_BY_TIME_LIMIT
+            self.status = PositionExecutorStatus.CANCELED_BY_TIME_LIMIT
 
     def process_order_filled_event(self, event: OrderFilledEvent):
         if self.open_order.order_id == event.order_id:
-            if self.status == SignalExecutorStatus.ACTIVE_POSITION:
+            if self.status == PositionExecutorStatus.ACTIVE_POSITION:
                 self._strategy.logger().info("Position incremented, updating take profit.")
             else:
-                self.status = SignalExecutorStatus.ACTIVE_POSITION
+                self.status = PositionExecutorStatus.ACTIVE_POSITION
                 self._strategy.logger().info("Position taken, placing take profit next tick.")
 
 
@@ -370,9 +370,6 @@ class Datatacadabra:
         self.connectors = connectors
         self.candles = {
             connector_name: {trading_pair: {"timestamp": deque(maxlen=max_records),
-                                            "open": deque(maxlen=max_records),
-                                            "low": deque(maxlen=max_records),
-                                            "high": deque(maxlen=max_records),
                                             "close": deque(maxlen=max_records),
                                             "best_bid": deque(maxlen=max_records),
                                             "best_ask": deque(maxlen=max_records),
@@ -387,9 +384,6 @@ class Datatacadabra:
                 best_bid = self.connectors[connector_name].get_price(trading_pair, False)
                 best_ask = self.connectors[connector_name].get_price(trading_pair, True)
                 ohlc["timestamp"].append(time.time())
-                ohlc["open"].append(price)
-                ohlc["low"].append(price)
-                ohlc["high"].append(price)
                 ohlc["close"].append(price)
                 ohlc["best_bid"].append(best_bid)
                 ohlc["best_ask"].append(best_ask)
@@ -400,7 +394,7 @@ class Datatacadabra:
                 for connector_name, trading_pairs_candles in self.candles.items()}
 
     def features_df(self):
-        candles_df = self.candles_df()
+        candles_df = self.candles_df().copy()
         for connector_name, trading_pairs_candles in candles_df.items():
             for trading_pair, candles in trading_pairs_candles.items():
                 candles["rsi"] = talib.RSI(candles["close"], timeperiod=14)
@@ -415,22 +409,42 @@ class Datatacadabra:
                                  trading_pairs_features.items()}
                 for connector_name, trading_pairs_features in self.features_df().items()}
 
+    def get_signals(self):
+        signals = self.current_features().copy()
+        for connector_name, trading_pairs_features in signals.items():
+            for trading_pair, features in trading_pairs_features.items():
+                value = (features["rsi"] - 50) / 50
+                signal = Signal(
+                    id=str(random.randint(1, 1e10)),
+                    value=value,
+                    position_config=PositionConfig(
+                        timestamp=datetime.datetime.now().timestamp(),
+                        stop_loss=Decimal(0.05),
+                        take_profit=Decimal(0.03),
+                        time_limit=60,
+                        order_type=OrderType.MARKET,
+                        amount=Decimal(1),
+                        side=PositionSide.LONG if value < 0 else PositionSide.SHORT,
+                        trading_pair=trading_pair,
+                        exchange=connector_name,
+                    ),
+                )
+                signals[connector_name][trading_pair] = signal
+        return signals
+
 
 class DirectionalStrategyPerpetuals(ScriptStrategyBase):
     bot_profile = BotProfile(
         balance_limit=Decimal(1000),
         max_order_amount=Decimal(20),
-        long_threshold=0.8,
-        short_threshold=-0.8,
+        long_threshold=0.5,
+        short_threshold=-0.5,
         leverage=10,
     )
     max_executors = 1
     trading_pairs = ["ETH-USDT"]
     exchange = "binance_perpetual_testnet"
-    max_price_records = 500
-    price_collector = {trading_pair: deque(maxlen=500) for trading_pair in trading_pairs}
     signal_executors: Dict[str, PositionExecutor] = {}
-    data_initialized = False
     markets = {exchange: set(trading_pairs)}
 
     def __init__(self, connectors: Dict[str, ConnectorBase]):
@@ -439,18 +453,18 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
 
     def get_active_executors(self):
         return {signal: executor for signal, executor in self.signal_executors.items() if executor.status not in
-                [SignalExecutorStatus.CLOSED_BY_TIME_LIMIT,
-                 SignalExecutorStatus.CLOSED_BY_TAKE_PROFIT,
-                 SignalExecutorStatus.CLOSED_BY_STOP_LOSS,
-                 SignalExecutorStatus.CANCELED_BY_TIME_LIMIT]
+                [PositionExecutorStatus.CLOSED_BY_TIME_LIMIT,
+                 PositionExecutorStatus.CLOSED_BY_TAKE_PROFIT,
+                 PositionExecutorStatus.CLOSED_BY_STOP_LOSS,
+                 PositionExecutorStatus.CANCELED_BY_TIME_LIMIT]
                 }
 
     def get_closed_executors(self):
         return {signal: executor for signal, executor in self.signal_executors.items() if executor.status in
-                [SignalExecutorStatus.CLOSED_BY_TIME_LIMIT,
-                 SignalExecutorStatus.CLOSED_BY_TAKE_PROFIT,
-                 SignalExecutorStatus.CLOSED_BY_STOP_LOSS,
-                 SignalExecutorStatus.CANCELED_BY_TIME_LIMIT]
+                [PositionExecutorStatus.CLOSED_BY_TIME_LIMIT,
+                 PositionExecutorStatus.CLOSED_BY_TAKE_PROFIT,
+                 PositionExecutorStatus.CLOSED_BY_STOP_LOSS,
+                 PositionExecutorStatus.CANCELED_BY_TIME_LIMIT]
                 }
 
     def get_active_positions_df(self):
@@ -469,22 +483,22 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
         return pd.DataFrame(active_positions)
 
     def on_tick(self):
-        if not self.data_initialized:
+        if not self.datacadabra:
             self.datacadabra = Datatacadabra(max_records=500, connectors=self.connectors)
-            self.data_initialized = True
         self.datacadabra.process_tick()
-        # self.data_collector_process_tick()
-        # self.logger().info(self.rsi())
-        if len(self.get_active_executors().keys()) < self.max_executors:
-            signal: Signal = self.get_signal()
-            if signal.value > self.bot_profile.long_threshold or signal.value < self.bot_profile.short_threshold:
-                position_config = signal.position_config
-                price = self.connectors[position_config.exchange].get_mid_price(position_config.trading_pair)
-                position_config.amount = (self.bot_profile.max_order_amount / price) * position_config.amount
-                self.signal_executors[signal.id] = PositionExecutor(
-                    position_config=position_config,
-                    strategy=self
-                )
+        # TODO: Order the dictionary by highest abs signal values
+        for connector_name, trading_pair_signals in self.datacadabra.get_signals().items():
+            for trading_pair, signal in trading_pair_signals.items():
+                if len(self.get_active_executors().keys()) < self.max_executors:
+                    # signal: Signal = self.get_signal()
+                    if signal.value > self.bot_profile.long_threshold or signal.value < self.bot_profile.short_threshold:
+                        position_config = signal.position_config
+                        price = self.connectors[position_config.exchange].get_mid_price(position_config.trading_pair)
+                        position_config.amount = (self.bot_profile.max_order_amount / price) * position_config.amount
+                        self.signal_executors[signal.id] = PositionExecutor(
+                            position_config=position_config,
+                            strategy=self
+                        )
         for executor in self.get_active_executors().values():
             executor.control_position()
         for executor in self.get_closed_executors().values():
@@ -492,7 +506,7 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
 
     def get_signal(self):
         return Signal(
-            id=random.randint(1, 1e10),
+            id=str(random.randint(1, 1e10)),
             value=0.9,
             position_config=PositionConfig(
                 timestamp=datetime.datetime.now().timestamp(),
@@ -576,21 +590,21 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
                 ["", "  Positions:"] + ["    " + line for line in positions_df.to_string(index=False).split("\n")])
         else:
             lines.extend(["", "  No active positions."])
-
-        if self.datacadabra:
-            candles_df = self.datacadabra.features_df()
-            lines.extend(
-                ["", "  Data:"] + ["    " + line for line in candles_df[self.exchange][self.trading_pairs[0]].to_string(index=False).split("\n")])
-            lines.extend(["Current features: "])
-
-            for connector_name, trading_pair_features in self.datacadabra.current_features().items():
-                lines.extend([f"Connector: {connector_name}"])
-                for trading_pair, features in trading_pair_features.items():
-                    lines.extend([f"   Trading Pair: {trading_pair}"])
-                    for feature, value in features.items():
-                        lines.extend([f"       - {feature}: {value}"])
-        else:
-            lines.extend(["", "  No data collected."])
+        #
+        # if self.datacadabra:
+        #     candles_df = self.datacadabra.features_df()
+        #     lines.extend(
+        #         ["", "  Data:"] + ["    " + line for line in candles_df[self.exchange][self.trading_pairs[0]].to_string(index=False).split("\n")])
+        #     lines.extend(["Current features: "])
+        #
+        #     for connector_name, trading_pair_features in self.datacadabra.current_features().items():
+        #         lines.extend([f"Connector: {connector_name}"])
+        #         for trading_pair, features in trading_pair_features.items():
+        #             lines.extend([f"   Trading Pair: {trading_pair}"])
+        #             for feature, value in features.items():
+        #                 lines.extend([f"       - {feature}: {value}"])
+        # else:
+        #     lines.extend(["", "  No data collected."])
         if len(self.get_closed_executors().keys()) > 0:
             lines.extend(["############################################################################"])
             lines.extend(["############################# Closed Executors #############################"])
@@ -608,6 +622,28 @@ Signal: {signal_id}
     - PNL: {executor.pnl * 100:.2f}%
         """])
             lines.extend(["-------------------------------------------------------------------------"])
+
+        if self.datacadabra:
+            candles_df = self.datacadabra.features_df()
+            lines.extend(
+                ["", "  Data:"] + ["    " + line for line in candles_df[self.exchange][self.trading_pairs[0]].tail().to_string(index=False).split("\n")])
+            lines.extend(["Current features: "])
+
+            for connector_name, trading_pair_features in self.datacadabra.current_features().items():
+                lines.extend([f"Connector: {connector_name}"])
+                for trading_pair, features in trading_pair_features.items():
+                    lines.extend([f"   Trading Pair: {trading_pair}"])
+                    for feature, value in features.items():
+                        lines.extend([f"       - {feature}: {value}"])
+
+            for connector_name, trading_pair_signal in self.datacadabra.get_signals().items():
+                lines.extend([f"Connector: {connector_name}"])
+                for trading_pair, signal in trading_pair_signal.items():
+                    lines.extend([f"   Trading Pair: {trading_pair} | Signal: {signal.value}"])
+
+        else:
+            lines.extend(["", "  No data collected."])
+
         if len(self.get_active_executors().keys()) > 0:
             lines.extend(["############################################################################"])
             lines.extend(["############################# Active Executors #############################"])
