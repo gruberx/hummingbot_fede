@@ -15,6 +15,7 @@ dependencies:
   - numpy=1.20.1
   - numpy-base=1.20.1
   - pandas=1.2.1
+  - ta-lib=0.4.19
   - pip=21.1.2
   - prompt_toolkit=3.0.20
   - pydantic=1.9
