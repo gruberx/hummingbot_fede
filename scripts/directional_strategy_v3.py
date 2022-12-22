@@ -322,7 +322,6 @@ class PositionExecutor:
                 )
                 self._time_limit_order.order_id = order_id
                 self._status = PositionExecutorStatus.CLOSE_PLACED
-                # self._strategy.logger().info(f"Signal id {self._position_config.id}: Closing position by time limit")
 
     def process_order_completed_event(self, event: Union[BuyOrderCompletedEvent, SellOrderCompletedEvent]):
         if self.open_order.order_id == event.order_id:
@@ -420,8 +419,8 @@ class Datatacadabra:
                     value=value,
                     position_config=PositionConfig(
                         timestamp=datetime.datetime.now().timestamp(),
-                        stop_loss=Decimal(0.05),
-                        take_profit=Decimal(0.03),
+                        stop_loss=Decimal(0.01),
+                        take_profit=Decimal(0.004),
                         time_limit=60,
                         order_type=OrderType.MARKET,
                         amount=Decimal(1),
@@ -437,14 +436,15 @@ class Datatacadabra:
 class DirectionalStrategyPerpetuals(ScriptStrategyBase):
     bot_profile = BotProfile(
         balance_limit=Decimal(1000),
-        max_order_amount=Decimal(20),
+        max_order_amount=Decimal(30),
         long_threshold=0.5,
         short_threshold=-0.5,
         leverage=10,
     )
-    max_executors = 1
-    trading_pairs = ["ETH-USDT"]
+    max_executors_by_connector_trading_pair = 1
+    trading_pairs = ["ETH-USDT", "BTC-USDT"]
     exchange = "binance_perpetual_testnet"
+    set_leverage_flag = None
     signal_executors: Dict[str, PositionExecutor] = {}
     markets = {exchange: set(trading_pairs)}
 
@@ -458,6 +458,15 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
                  PositionExecutorStatus.CLOSED_BY_TAKE_PROFIT,
                  PositionExecutorStatus.CLOSED_BY_STOP_LOSS,
                  PositionExecutorStatus.CANCELED_BY_TIME_LIMIT]
+                }
+
+    def get_active_executors_by_connector_trading_pair(self, connector_name, trading_pair):
+        return {signal: executor for signal, executor in self.signal_executors.items() if executor.status not in
+                [PositionExecutorStatus.CLOSED_BY_TIME_LIMIT,
+                 PositionExecutorStatus.CLOSED_BY_TAKE_PROFIT,
+                 PositionExecutorStatus.CLOSED_BY_STOP_LOSS,
+                 PositionExecutorStatus.CANCELED_BY_TIME_LIMIT] and executor.exchange == connector_name
+                and executor.trading_pair == trading_pair
                 }
 
     def get_closed_executors(self):
@@ -484,14 +493,18 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
         return pd.DataFrame(active_positions)
 
     def on_tick(self):
+        # TODO: fix bug in binance perpetuals to set leverage
+        # if not self.set_leverage_flag:
+        #     for connector in self.connectors.values():
+        #         for trading_pair in connector.trading_pairs:
+        #             connector.set_leverage(trading_pair=trading_pair, leverage=self.bot_profile.leverage)
         if not self.datacadabra:
             self.datacadabra = Datatacadabra(max_records=500, connectors=self.connectors)
         self.datacadabra.process_tick()
         # TODO: Order the dictionary by highest abs signal values
         for connector_name, trading_pair_signals in self.datacadabra.get_signals().items():
             for trading_pair, signal in trading_pair_signals.items():
-                if len(self.get_active_executors().keys()) < self.max_executors:
-                    # signal: Signal = self.get_signal()
+                if len(self.get_active_executors_by_connector_trading_pair(connector_name, trading_pair).keys()) < self.max_executors_by_connector_trading_pair:
                     if signal.value > self.bot_profile.long_threshold or signal.value < self.bot_profile.short_threshold:
                         position_config = signal.position_config
                         price = self.connectors[position_config.exchange].get_mid_price(position_config.trading_pair)
@@ -504,23 +517,6 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
             executor.control_position()
         for executor in self.get_closed_executors().values():
             executor.clean_executor()
-
-    def get_signal(self):
-        return Signal(
-            id=str(random.randint(1, 1e10)),
-            value=0.9,
-            position_config=PositionConfig(
-                timestamp=datetime.datetime.now().timestamp(),
-                stop_loss=Decimal(0.05),
-                take_profit=Decimal(0.03),
-                time_limit=30,
-                order_type=OrderType.MARKET,
-                amount=Decimal(1),
-                side=PositionSide.LONG,
-                trading_pair="ETH-USDT",
-                exchange="binance_perpetual_testnet",
-            ),
-        )
 
     def place_order(self,
                     connector_name: str,
@@ -591,79 +587,33 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
                 ["", "  Positions:"] + ["    " + line for line in positions_df.to_string(index=False).split("\n")])
         else:
             lines.extend(["", "  No active positions."])
-        #
-        # if self.datacadabra:
-        #     candles_df = self.datacadabra.features_df()
-        #     lines.extend(
-        #         ["", "  Data:"] + ["    " + line for line in candles_df[self.exchange][self.trading_pairs[0]].to_string(index=False).split("\n")])
-        #     lines.extend(["Current features: "])
-        #
-        #     for connector_name, trading_pair_features in self.datacadabra.current_features().items():
-        #         lines.extend([f"Connector: {connector_name}"])
-        #         for trading_pair, features in trading_pair_features.items():
-        #             lines.extend([f"   Trading Pair: {trading_pair}"])
-        #             for feature, value in features.items():
-        #                 lines.extend([f"       - {feature}: {value}"])
-        # else:
-        #     lines.extend(["", "  No data collected."])
+
         if len(self.get_closed_executors().keys()) > 0:
-            lines.extend(["############################################################################"])
-            lines.extend(["############################# Closed Executors #############################"])
-            lines.extend(["############################################################################"])
+            lines.extend(["\n########################################## Closed Executors ##########################################"])
 
         for signal_id, executor in self.get_closed_executors().items():
             lines.extend([f"""
-Signal: {signal_id}
-    - Trading Pair: {executor.trading_pair}
-    - Side: {executor.side}
-    - Exchange: {executor.exchange}
-    - Status: {executor.status}
-    - Entry price: {executor.entry_price}
-    - Close price: {executor.close_price}
-    - PNL: {executor.pnl * 100:.2f}%
-        """])
-            lines.extend(["-------------------------------------------------------------------------"])
-
-        if self.datacadabra:
-            candles_df = self.datacadabra.features_df()
-            lines.extend(
-                ["", "  Data:"] + ["    " + line for line in candles_df[self.exchange][self.trading_pairs[0]].tail().to_string(index=False).split("\n")])
-            lines.extend(["Current features: "])
-
-            for connector_name, trading_pair_features in self.datacadabra.current_features().items():
-                lines.extend([f"Connector: {connector_name}"])
-                for trading_pair, features in trading_pair_features.items():
-                    lines.extend([f"   Trading Pair: {trading_pair}"])
-                    for feature, value in features.items():
-                        lines.extend([f"       - {feature}: {value}"])
-
-            for connector_name, trading_pair_signal in self.datacadabra.get_signals().items():
-                lines.extend([f"Connector: {connector_name}"])
-                for trading_pair, signal in trading_pair_signal.items():
-                    lines.extend([f"   Trading Pair: {trading_pair} | Signal: {signal.value}"])
-
-        else:
-            lines.extend(["", "  No data collected."])
+| Signal: {signal_id}
+| Trading Pair: {executor.trading_pair} | Exchange: {executor.exchange} | Side: {executor.side} | Amount: {executor.amount:.4f}
+| Status: {executor.status}
+| Entry price: {executor.entry_price}  | Close price: {executor.close_price} --> PNL: {executor.pnl * 100:.2f}%
+"""])
+            lines.extend(["-----------------------------------------------------------------------------------------------------------"])
 
         if len(self.get_active_executors().keys()) > 0:
-            lines.extend(["############################################################################"])
-            lines.extend(["############################# Active Executors #############################"])
-            lines.extend(["############################################################################"])
+            lines.extend(["\n########################################## Active Executors ##########################################"])
 
         for signal_id, executor in self.get_active_executors().items():
             current_price = self.connectors[executor.position_config.exchange].get_mid_price(
                 executor.position_config.trading_pair)
             lines.extend([f"""
-Signal: {signal_id}
-    - Trading Pair: {executor.trading_pair}
-    - Side: {executor.side}
-    - Exchange: {executor.exchange}
-    - Status: {executor.status}
-    - Entry price: {executor.entry_price}
-    - Current price: {current_price}
-    - PNL: {executor.pnl * 100:.2f}%
-                    """])
-            lines.extend(["-------------------------------------------------------------------------"])
+| Signal: {signal_id}
+| Trading Pair: {executor.trading_pair} | Exchange: {executor.exchange} | Side: {executor.side} | Amount: {executor.amount:.4f}
+| Entry price: {executor.entry_price}  | Current price: {current_price} --> PNL: {executor.pnl * 100:.2f}%
+
+"""])
+            time_scale = 67
+            price_scale = 47
 
             start_time = datetime.datetime.fromtimestamp(executor.position_config.timestamp)
             duration = datetime.timedelta(seconds=executor.position_config.time_limit)
@@ -671,11 +621,9 @@ Signal: {signal_id}
             current_timestamp = datetime.datetime.fromtimestamp(self.current_timestamp)
             seconds_remaining = (end_time - current_timestamp)
 
-            scale = 50
             time_progress = (duration.seconds - seconds_remaining.seconds) / duration.seconds
-            time_bar = ['*' if i < scale * time_progress else '-' for i in range(scale)]
-            lines.extend(["Time limit:\n"])
-            lines.extend(["".join(time_bar)])
+            time_bar = "".join(['*' if i < time_scale * time_progress else '-' for i in range(time_scale)])
+            lines.extend([f"Time limit: {time_bar}"])
 
             if executor.stop_loss_price != 0 and executor.take_profit_order and executor.take_profit_order.order:
                 progress = 0
@@ -686,11 +634,28 @@ Signal: {signal_id}
                 elif executor.side == PositionSide.SHORT:
                     price_range = stop_loss_price - executor.take_profit_order.order.price
                     progress = (stop_loss_price - current_price) / price_range
-                price_bar = [f'--{current_price:.2f}--' if i == int(scale * progress) else '-' for i in range(scale)]
+                price_bar = [f'--{current_price:.2f}--' if i == int(price_scale * progress) else '-' for i in range(price_scale)]
                 price_bar.insert(0, f"SL:{stop_loss_price:.2f}")
                 price_bar.append(f"TP:{executor.take_profit_order.order.price:.2f}")
-                lines.extend(["\nPosition progress:\n"])
-                lines.extend(["".join(price_bar)])
+                lines.extend(["".join(price_bar), "\n"])
+            lines.extend(["-----------------------------------------------------------------------------------------------------------"])
+
+        if self.datacadabra:
+            lines.extend(["\n############################################ Market Data ############################################"])
+            candles_df = self.datacadabra.features_df()
+            for connector_name, trading_pair_signal in self.datacadabra.get_signals().items():
+                for trading_pair, signal in trading_pair_signal.items():
+                    lines.extend([f"""
+
+| Trading Pair: {trading_pair} | Exchange: {connector_name}
+| Signal: {signal.value:.2f}
+
+"""])
+                    lines.extend(["    " + line for line in candles_df[self.exchange][self.trading_pairs[0]].tail().to_string(index=False).split("\n")])
+                    lines.extend(["\n-----------------------------------------------------------------------------------------------------------"])
+
+        else:
+            lines.extend(["", "  No data collected."])
 
         warning_lines.extend(self.balance_warning(self.get_market_trading_pair_tuples()))
         if len(warning_lines) > 0:
