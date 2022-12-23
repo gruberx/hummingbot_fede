@@ -365,7 +365,7 @@ class PositionExecutor:
                 self._strategy.logger().info("Position taken, placing take profit next tick.")
 
 
-class Datatacadabra:
+class SignalFactory:
     def __init__(self, max_records: int, connectors: Dict[str, ConnectorBase]):
         self.connectors = connectors
         self.candles = {
@@ -450,7 +450,7 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
 
     def __init__(self, connectors: Dict[str, ConnectorBase]):
         super().__init__(connectors)
-        self.datacadabra = None
+        self.signal_factory = None
 
     def get_active_executors(self):
         return {signal: executor for signal, executor in self.signal_executors.items() if executor.status not in
@@ -498,11 +498,11 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
         #     for connector in self.connectors.values():
         #         for trading_pair in connector.trading_pairs:
         #             connector.set_leverage(trading_pair=trading_pair, leverage=self.bot_profile.leverage)
-        if not self.datacadabra:
-            self.datacadabra = Datatacadabra(max_records=500, connectors=self.connectors)
-        self.datacadabra.process_tick()
+        if not self.signal_factory:
+            self.signal_factory = SignalFactory(max_records=500, connectors=self.connectors)
+        self.signal_factory.process_tick()
         # TODO: Order the dictionary by highest abs signal values
-        for connector_name, trading_pair_signals in self.datacadabra.get_signals().items():
+        for connector_name, trading_pair_signals in self.signal_factory.get_signals().items():
             for trading_pair, signal in trading_pair_signals.items():
                 if len(self.get_active_executors_by_connector_trading_pair(connector_name, trading_pair).keys()) < self.max_executors_by_connector_trading_pair:
                     if signal.value > self.bot_profile.long_threshold or signal.value < self.bot_profile.short_threshold:
@@ -640,10 +640,10 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
                 lines.extend(["".join(price_bar), "\n"])
             lines.extend(["-----------------------------------------------------------------------------------------------------------"])
 
-        if self.datacadabra:
+        if self.signal_factory:
             lines.extend(["\n############################################ Market Data ############################################"])
-            candles_df = self.datacadabra.features_df()
-            for connector_name, trading_pair_signal in self.datacadabra.get_signals().items():
+            candles_df = self.signal_factory.features_df()
+            for connector_name, trading_pair_signal in self.signal_factory.get_signals().items():
                 for trading_pair, signal in trading_pair_signal.items():
                     lines.extend([f"""
 
