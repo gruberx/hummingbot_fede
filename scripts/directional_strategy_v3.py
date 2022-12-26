@@ -651,7 +651,7 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
 | Signal: {signal.value:.2f}
 
 """])
-                    lines.extend(["    " + line for line in candles_df[self.exchange][self.trading_pairs[0]].tail().to_string(index=False).split("\n")])
+                    lines.extend(["    " + line for line in candles_df[self.exchange][trading_pair].tail().to_string(index=False).split("\n")])
                     lines.extend(["\n-----------------------------------------------------------------------------------------------------------"])
 
         else:
