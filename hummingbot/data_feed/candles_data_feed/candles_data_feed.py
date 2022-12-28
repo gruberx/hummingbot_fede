@@ -80,9 +80,8 @@ class BinanceCandlesFeed(NetworkBase):
 
     async def check_network(self) -> NetworkStatus:
         rest_assistant = await self._api_factory.get_rest_assistant()
-        await rest_assistant.execute_request(
-            url=self.health_check_url,
-            throttler_limit_id=self.health_check_endpoint)
+        await rest_assistant.execute_request(url=self.health_check_url,
+                                             throttler_limit_id=self.health_check_endpoint)
         return NetworkStatus.CONNECTED
 
     @property
