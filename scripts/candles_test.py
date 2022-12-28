@@ -2,7 +2,7 @@ from typing import Dict
 
 from hummingbot.client.settings import ConnectorSetting
 from hummingbot.core.clock import Clock
-from hummingbot.data_feed.candles_data_feed.candles_data_feed import CandlesDataFeed
+from hummingbot.data_feed.candles_data_feed.candles_data_feed import BinanceCandlesFeed
 from hummingbot.strategy.script_strategy_base import ScriptStrategyBase
 
 
@@ -14,7 +14,7 @@ class CandlesTest(ScriptStrategyBase):
 
     def __init__(self, connectors: Dict[str, ConnectorSetting]) -> None:
         super().__init__(connectors)
-        self.candles_feed = CandlesDataFeed(exchange="binance", trading_pair="BTCUSDT")
+        self.candles_feed = BinanceCandlesFeed(exchange="binance", trading_pair="BTCUSDT", interval="1s")
         self.candles_feed.start()
 
     def stop(self, clock: Clock) -> None:
