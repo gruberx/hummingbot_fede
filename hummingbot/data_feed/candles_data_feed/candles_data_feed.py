@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from typing import Any, Dict, Optional, Union
+from collections import deque
+from typing import Any, Dict, Optional
 
 import aiohttp
 import numpy as np
@@ -45,26 +46,49 @@ class BinanceCandlesFeed(NetworkBase):
             cls._binance_candles_shared_instance = BinanceCandlesFeed()
         return cls._binance_candles_shared_instance
 
-    def __init__(self, exchange: str, trading_pair: str, interval: str = "1m", update_interval: float = 60.0):
+    def __init__(self, trading_pair: str, interval: str = "1m", update_interval: float = 60.0,
+                 max_records: int = 150):
         super().__init__()
-        self._ready_event = asyncio.Event()
+        self._ws_ready_event = asyncio.Event()
         self._shared_client: Optional[aiohttp.ClientSession] = None
         async_throttler = AsyncThrottler(
             rate_limits=self.rate_limits)
         self._api_factory = WebAssistantsFactory(throttler=async_throttler)
 
-        self._exchange = exchange
         self._trading_pair = trading_pair
-        self._ex_trading_pair = trading_pair.strip("-")
+        self._ex_trading_pair = trading_pair.replace("-", "")
         self._interval = interval
         self._check_network_interval = update_interval
 
         # TODO: check to remove
         self._ev_loop = asyncio.get_event_loop()
-        self._candles_array: Union[np.array(), None] = None
+        self._candles = deque(maxlen=max_records)
         self._update_interval: float = update_interval
         self._fetch_candles_task: Optional[asyncio.Task] = None
         self._listen_candles_task: Optional[asyncio.Task] = None
+
+    async def start_network(self):
+        await self.stop_network()
+        self._fill_candles_task = safe_ensure_future(self.fill_candles_loop())
+        self._listen_candles_task = safe_ensure_future(self.listen_for_subscriptions())
+
+    async def stop_network(self):
+        if self._fetch_candles_task is not None:
+            self._fetch_candles_task.cancel()
+            self._fetch_candles_task = None
+        if self._listen_candles_task is not None:
+            self._listen_candles_task.cancel()
+            self._listen_candles_task = None
+
+    def start(self):
+        NetworkBase.start(self)
+
+    def stop(self):
+        NetworkBase.stop(self)
+
+    @property
+    def is_ready(self):
+        return len(self._candles) == self._candles.maxlen
 
     @property
     def name(self):
@@ -86,50 +110,44 @@ class BinanceCandlesFeed(NetworkBase):
 
     @property
     def candles(self) -> pd.DataFrame:
-        return pd.DataFrame(self._candles_array, columns=self.columns)
+        return pd.DataFrame(self._candles, columns=self.columns, dtype=float)
 
-    async def fetch_candles_loop(self):
-        while True:
-            try:
-                await self.fetch_candles()
-                # TODO: check where to wait this event
-                self._ready_event.set()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                self.logger().network(f"Error fetching a new candles from {self.candles_url}.", exc_info=True,
-                                      app_warning_msg="Couldn't fetch newest candles from CustomAPI. "
-                                                      "Check network connection.")
-                await self._ready_event.wait()
-            await asyncio.sleep(self._update_interval)
-
-    async def fetch_candles(self):
+    async def fetch_candles(self,
+                            start_time: Optional[int] = None,
+                            end_time: Optional[int] = None,
+                            limit: Optional[int] = 500):
         rest_assistant = await self._api_factory.get_rest_assistant()
+        params = {"symbol": self._ex_trading_pair, "interval": self._interval, "limit": limit}
+        if start_time:
+            params["startTime"] = start_time
+        if end_time:
+            params["endTime"] = end_time
         candles = await rest_assistant.execute_request(url=self.candles_url,
                                                        throttler_limit_id=self.candles_endpoint,
-                                                       params={"symbol": self._ex_trading_pair,
-                                                               "interval": self._interval})
+                                                       params=params)
 
-        self._candles_array = np.array(candles)[:, :-1].astype(np.float)
+        return np.array(candles)[:, :-1].astype(np.float)
 
-    async def start_network(self):
-        await self.stop_network()
-        self._fetch_candles_task = safe_ensure_future(self.fetch_candles_loop())
-        self._listen_candles_task = safe_ensure_future(self.listen_for_subscriptions())
-
-    async def stop_network(self):
-        if self._fetch_candles_task is not None:
-            self._fetch_candles_task.cancel()
-            self._fetch_candles_task = None
-        if self._listen_candles_task is not None:
-            self._listen_candles_task.cancel()
-            self._listen_candles_task = None
-
-    def start(self):
-        NetworkBase.start(self)
-
-    def stop(self):
-        NetworkBase.stop(self)
+    async def fill_candles_loop(self):
+        while True:
+            if self._ws_ready_event.is_set():
+                missing_records = self._candles.maxlen - len(self._candles)
+                if missing_records > 0:
+                    end_timestamp = self._candles[0][0]
+                    try:
+                        # we have to add one more since, the last row is not going to be included
+                        candles = await self.fetch_candles(end_time=end_timestamp, limit=missing_records + 1)
+                        # we are computing again the quantity of records again since the websocket process is able to
+                        # modify the deque and if we extend it, the new observations are going to be dropped.
+                        missing_records = self._candles.maxlen - len(self._candles)
+                        self._candles.extendleft(candles[-(missing_records + 1):-1][::-1])
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        self.logger().exception(
+                            "Unexpected error occurred when getting historical klines. Retrying in 1 seconds...",
+                        )
+            await self._sleep(1.0)
 
     async def listen_for_subscriptions(self):
         """
@@ -148,7 +166,7 @@ class BinanceCandlesFeed(NetworkBase):
                 self.logger().warning(f"The websocket connection was closed ({connection_exception})")
             except Exception:
                 self.logger().exception(
-                    "Unexpected error occurred when listening to order book streams. Retrying in 5 seconds...",
+                    "Unexpected error occurred when listening to public klines. Retrying in 5 seconds...",
                 )
                 await self._sleep(1.0)
             finally:
@@ -176,33 +194,42 @@ class BinanceCandlesFeed(NetworkBase):
             subscribe_candles_request: WSJSONRequest = WSJSONRequest(payload=payload)
 
             await ws.send(subscribe_candles_request)
-
             self.logger().info("Subscribed to public klines...")
         except asyncio.CancelledError:
             raise
         except Exception:
             self.logger().error(
-                "Unexpected error occurred subscribing to order book trading and delta streams...",
+                "Unexpected error occurred subscribing to public klines...",
                 exc_info=True
             )
+            await self._ws_ready_event.wait()
             raise
 
     async def _process_websocket_messages(self, websocket_assistant: WSAssistant):
         async for ws_response in websocket_assistant.iter_messages():
             data: Dict[str, Any] = ws_response.data
-            if data is not None:  # data will be None when the websocket is disconnected
-                # timestamp = data["k"]["t"]
-                # open = data["k"]["o"]
-                # low = data["k"]["l"]
-                # high = data["k"]["h"]
-                # close = data["k"]["c"]
-                # volume = data["k"]["v"]
-                # close_ts = data["k"]["T"]
-                # quote_asset_volume = data["k"]["q"]
-                # n_trades = data["k"]["n"]
-                # taker_buy_base_volume = data["k"]["V"]
-                # taker_buy_quote_volume = data["k"]["V"]
-                self.logger().info(data)
+            if data is not None and data.get("e") == "kline":  # data will be None when the websocket is disconnected
+                timestamp = data["k"]["t"]
+                open = data["k"]["o"]
+                low = data["k"]["l"]
+                high = data["k"]["h"]
+                close = data["k"]["c"]
+                volume = data["k"]["v"]
+                close_ts = data["k"]["T"]
+                quote_asset_volume = data["k"]["q"]
+                n_trades = data["k"]["n"]
+                taker_buy_base_volume = data["k"]["V"]
+                taker_buy_quote_volume = data["k"]["Q"]
+                if len(self._candles) == 0:
+                    self._candles.append(np.array([timestamp, open, low, high, close, volume, close_ts,
+                                                   quote_asset_volume, n_trades, taker_buy_base_volume,
+                                                   taker_buy_quote_volume]))
+                elif timestamp != int(self._candles[-1][0]):
+                    self._candles.append(np.array([timestamp, open, low, high, close, volume, close_ts,
+                                                   quote_asset_volume, n_trades, taker_buy_base_volume,
+                                                   taker_buy_quote_volume]))
+
+                self._ws_ready_event.set()
 
     async def _sleep(self, delay):
         """

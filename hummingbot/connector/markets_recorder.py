@@ -36,6 +36,7 @@ from hummingbot.model.order import Order
 from hummingbot.model.order_status import OrderStatus
 from hummingbot.model.range_position_collected_fees import RangePositionCollectedFees
 from hummingbot.model.range_position_update import RangePositionUpdate
+from hummingbot.model.signal import Signal
 from hummingbot.model.sql_connection_manager import SQLConnectionManager
 from hummingbot.model.trade_fill import TradeFill
 
@@ -45,6 +46,18 @@ class MarketsRecorder:
         event_obj.value: event_obj
         for event_obj in MarketEvent.__members__.values()
     }
+    _mr_shared_instance: "MarketsRecorder" = None
+
+    @classmethod
+    def get_instance(cls,
+                     sql: Optional[SQLConnectionManager] = None,
+                     markets: Optional[List[ConnectorBase]] = None,
+                     config_file_path: Optional[str] = None,
+                     strategy_name: Optional[str] = None
+                     ) -> "MarketsRecorder":
+        if cls._mr_shared_instance is None:
+            cls._mr_shared_instance = MarketsRecorder(sql, markets, config_file_path, strategy_name)
+        return cls._mr_shared_instance
 
     def __init__(self,
                  sql: SQLConnectionManager,
@@ -421,3 +434,9 @@ class MarketsRecorder:
                                                                                  claimed_fee_1=Decimal(evt.claimed_fee_1))
                 session.add(rp_fees)
                 self.save_market_states(self._config_file_path, connector, session=session)
+
+    def add_closed_signal(self, signal: Dict):
+        with self._sql_manager.get_new_session() as session:
+            with session.begin():
+                signal_record: Order = Signal(**signal)
+                session.add(signal_record)

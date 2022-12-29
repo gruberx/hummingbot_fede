@@ -294,7 +294,7 @@ class HummingbotApplication(*commands):
                 connector = connector_class(read_only_config, **init_params)
             self.markets[connector_name] = connector
 
-        self.markets_recorder = MarketsRecorder(
+        self.markets_recorder = MarketsRecorder.get_instance(
             self.trade_fill_db,
             list(self.markets.values()),
             self.strategy_file_name,
