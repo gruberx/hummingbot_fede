@@ -1,5 +1,6 @@
 import datetime
 import random
+import time
 from decimal import Decimal
 from enum import Enum
 from typing import Dict, List, Optional, Union
@@ -96,6 +97,7 @@ class PositionExecutor:
         self._time_limit_order: TrackedOrder = TrackedOrder()
         self._stop_loss_order: TrackedOrder = TrackedOrder()
         self.signal_value = signal_value
+        self._close_timestamp = None
 
     @property
     def position_config(self):
@@ -108,6 +110,14 @@ class PositionExecutor:
     @status.setter
     def status(self, status: PositionExecutorStatus):
         self._status = status
+
+    @property
+    def close_timestamp(self):
+        return self._status
+
+    @close_timestamp.setter
+    def close_timestamp(self, close_timestamp: float):
+        self._close_timestamp = close_timestamp
 
     @property
     def connector(self) -> ConnectorBase:
@@ -332,13 +342,16 @@ class PositionExecutor:
             self._strategy.logger().info("Closed by Stop loss")
             self.remove_take_profit()
             self.status = PositionExecutorStatus.CLOSED_BY_STOP_LOSS
+            self.close_timestamp = time.time()
         elif self.time_limit_order.order_id == event.order_id:
             self._strategy.logger().info("Closed by Time Limit")
             self.remove_take_profit()
             self.status = PositionExecutorStatus.CLOSED_BY_TIME_LIMIT
+            self.close_timestamp = time.time()
         elif self.take_profit_order.order_id == event.order_id:
             self._strategy.logger().info("Closed by Take Profit")
             self.status = PositionExecutorStatus.CLOSED_BY_TAKE_PROFIT
+            self.close_timestamp = time.time()
 
     def process_order_created_event(self, event: Union[BuyOrderCreatedEvent, SellOrderCreatedEvent]):
         if self.open_order.order_id == event.order_id:
@@ -357,6 +370,7 @@ class PositionExecutor:
     def process_order_canceled_event(self, event: OrderCancelledEvent):
         if self.open_order.order_id == event.order_id:
             self.status = PositionExecutorStatus.CANCELED_BY_TIME_LIMIT
+            self.close_timestamp = time.time()
 
     def process_order_filled_event(self, event: OrderFilledEvent):
         if self.open_order.order_id == event.order_id:
@@ -568,6 +582,7 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
             signal = {
                 "id": signal_id,
                 "timestamp": int(executor.timestamp),
+                "close_timestamp": int(executor.close_timestamp),
                 "value": executor.signal_value,
                 "sl": executor.position_config.stop_loss,
                 "tp": executor.position_config.take_profit,
@@ -583,7 +598,6 @@ class DirectionalStrategyPerpetuals(ScriptStrategyBase):
                 "pnl": executor.pnl,
                 "leverage": self.bot_profile.leverage,
             }
-
             MarketsRecorder.get_instance().add_closed_signal(signal)
             self.stored_executors.append(signal_id)
 
