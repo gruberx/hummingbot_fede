@@ -11,6 +11,7 @@ class Signal(HummingbotBase):
 
     id = Column(Text, primary_key=True, nullable=False)
     timestamp = Column(BigInteger, nullable=False)
+    close_timestamp = Column(BigInteger, nullable=False)
     value = Column(SqliteDecimal(6), nullable=False)
     sl = Column(SqliteDecimal(6), nullable=False)
     tp = Column(SqliteDecimal(6), nullable=False)
