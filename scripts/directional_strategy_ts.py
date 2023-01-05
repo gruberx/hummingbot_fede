@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
-import talib
+import pandas_ta as ta  # noqa: F401
 from pydantic import BaseModel
 
 from hummingbot.connector.connector_base import ConnectorBase
@@ -407,11 +407,7 @@ class SignalFactory:
         candles_df = self.candles_df().copy()
         for connector_name, trading_pairs_candles in candles_df.items():
             for trading_pair, candles in trading_pairs_candles.items():
-                candles["rsi"] = talib.RSI(candles["close"], timeperiod=14)
-                candles["macd"], candles["signal"], candles["hist"] = talib.MACD(candles["close"],
-                                                                                 fastperiod=12,
-                                                                                 slowperiod=26,
-                                                                                 signalperiod=9)
+                candles.ta.rsi(length=14, append=True)
         return candles_df
 
     def current_features(self):
@@ -423,7 +419,7 @@ class SignalFactory:
         signals = self.current_features().copy()
         for connector_name, trading_pairs_features in signals.items():
             for trading_pair, features in trading_pairs_features.items():
-                value = (features["rsi"] - 50) / 50
+                value = (features["RSI_14"] - 50) / 50
                 signal = Signal(
                     id=str(random.randint(1, 1e10)),
                     value=value,
