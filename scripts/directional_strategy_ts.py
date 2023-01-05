@@ -113,7 +113,7 @@ class PositionExecutor:
 
     @property
     def close_timestamp(self):
-        return self._status
+        return self._close_timestamp
 
     @close_timestamp.setter
     def close_timestamp(self, close_timestamp: float):
