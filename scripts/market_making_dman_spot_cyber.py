@@ -46,7 +46,7 @@ class MarketMakingDman(ScriptStrategyBase):
     # )
     config_v2 = DManV2Config(
         # exchange="binance_perpetual",
-        exchange="binance_paper_trade",
+        exchange="binance",
         # trading_pair="LPT-USDT",
         trading_pair="CYBER-USDT",
         order_refresh_time=60 * 5,
@@ -63,7 +63,7 @@ class MarketMakingDman(ScriptStrategyBase):
         ],
         candles_config=[
             # CandlesConfig(connector="binance_perpetual", trading_pair="LPT-USDT", interval="3m", max_records=1000),
-            CandlesConfig(connector="binance", trading_pair="CYBER-USDT", interval="3m", max_records=1000),
+            CandlesConfig(connector="binance_paper_trade", trading_pair="CYBER-USDT", interval="3m", max_records=1000),
         ],
         leverage=10,
         natr_length=21, macd_fast=12, macd_slow=26, macd_signal=9
