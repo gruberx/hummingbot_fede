@@ -26,7 +26,7 @@ class BinanceSpotPaperCandles(CandlesBase):
 
     @property
     def name(self):
-        return f"binance_{self._trading_pair}"
+        return f"binance_paper_trade_{self._trading_pair}"
 
     @property
     def rest_url(self):
