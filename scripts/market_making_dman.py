@@ -58,7 +58,7 @@ class MarketMakingDman(ScriptStrategyBase):
         ],
         candles_config=[
             # CandlesConfig(connector="binance_perpetual", trading_pair="LPT-USDT", interval="3m", max_records=1000),
-            CandlesConfig(connector="binance_perpetual_testnet", trading_pair="LPT-USDT", interval="3m", max_records=1000),
+            CandlesConfig(connector="binance_perpetual_testnet", trading_pair="BTC-USDT", interval="3m", max_records=1000),
         ],
         leverage=10,
         natr_length=21, macd_fast=12, macd_slow=26, macd_signal=9

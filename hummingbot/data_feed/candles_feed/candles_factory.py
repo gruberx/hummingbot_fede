@@ -2,6 +2,7 @@ from pydantic import BaseModel
 
 from hummingbot.data_feed.candles_feed.ascend_ex_spot_candles.ascend_ex_spot_candles import AscendExSpotCandles
 from hummingbot.data_feed.candles_feed.binance_perpetual_candles import BinancePerpetualCandles
+from hummingbot.data_feed.candles_feed.binance_perpetual_testnet_candles import BinancePerpetualTestnetCandles
 from hummingbot.data_feed.candles_feed.binance_spot_candles import BinanceSpotCandles
 from hummingbot.data_feed.candles_feed.gate_io_perpetual_candles import GateioPerpetualCandles
 from hummingbot.data_feed.candles_feed.gate_io_spot_candles import GateioSpotCandles
@@ -43,6 +44,8 @@ class CandlesFactory:
         max_records = candles_config.max_records
         if connector == "binance_perpetual":
             return BinancePerpetualCandles(trading_pair, interval, max_records)
+        if connector == "binance_perpetual_testnet":
+            return BinancePerpetualTestnetCandles(trading_pair, interval, max_records)
         elif connector == "binance":
             return BinanceSpotCandles(trading_pair, interval, max_records)
         elif connector == "gate_io":
