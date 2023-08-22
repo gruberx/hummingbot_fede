@@ -6,7 +6,7 @@ REST_URL = "https://testnet.binancefuture.com"
 HEALTH_CHECK_ENDPOINT = "/fapi/v1/ping"
 CANDLES_ENDPOINT = "/fapi/v1/klines"
 
-WSS_URL = "wss://stream.binancefuture.com"
+WSS_URL = "wss://stream.binancefuture.com/ws"
 
 INTERVALS = bidict({
     "1s": 1,
