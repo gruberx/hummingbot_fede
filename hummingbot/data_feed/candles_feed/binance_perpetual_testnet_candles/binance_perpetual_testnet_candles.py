@@ -26,7 +26,7 @@ class BinancePerpetualTestnetCandles(CandlesBase):
 
     @property
     def name(self):
-        return f"binance_perpetual_testnet{self._trading_pair}"
+        return f"binance_perpetual_testnet_{self._trading_pair}"
 
     @property
     def rest_url(self):
