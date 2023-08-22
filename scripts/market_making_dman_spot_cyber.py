@@ -46,7 +46,7 @@ class MarketMakingDman(ScriptStrategyBase):
     # )
     config_v2 = DManV2Config(
         # exchange="binance_perpetual",
-        exchange="binance",
+        exchange="binance_paper_trade",
         # trading_pair="LPT-USDT",
         trading_pair="CYBER-USDT",
         order_refresh_time=60 * 5,
