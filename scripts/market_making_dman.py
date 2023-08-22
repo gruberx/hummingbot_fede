@@ -12,10 +12,15 @@ from hummingbot.strategy.script_strategy_base import ScriptStrategyBase
 
 class MarketMakingDman(ScriptStrategyBase):
     triple_barrier_conf = TripleBarrierConf(
-        stop_loss=Decimal("0.02"), take_profit=Decimal("0.02"),
+        # stop_loss=Decimal("0.02"), take_profit=Decimal("0.02"),
+        # time_limit=60 * 60 * 24,
+        # trailing_stop_activation_price_delta=Decimal("0.08"),
+        # trailing_stop_trailing_delta=Decimal("0.02")
+        stop_loss=Decimal("0.009"), take_profit=Decimal("0.006"),
         time_limit=60 * 60 * 24,
-        trailing_stop_activation_price_delta=Decimal("0.08"),
-        trailing_stop_trailing_delta=Decimal("0.02")
+        trailing_stop_activation_price_delta=Decimal("0.003"),
+        trailing_stop_trailing_delta=Decimal("0.0005")
+
     )
 
     # config_v1 = DManV1Config(
