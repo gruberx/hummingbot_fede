@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from hummingbot.data_feed.candles_feed.candles_factory import CandlesFactory
+from hummingbot.data_feed.candles_feed.candles_factory import CandlesConfig, CandlesFactory
 from hummingbot.strategy.directional_strategy_base import DirectionalStrategyBase
 
 
@@ -39,7 +39,7 @@ class WideningEMABands(DirectionalStrategyBase):
     # Define the trading pair and exchange that we want to use and the csv where we are going to store the entries
     trading_pair: str = "LINA-USDT"
     exchange: str = "binance_perpetual"
-    order_amount_usd = Decimal("20")
+    order_amount_usd = Decimal("40")
     leverage = 10
     distance_pct_threshold = 0.02
 
@@ -50,9 +50,7 @@ class WideningEMABands(DirectionalStrategyBase):
     trailing_stop_activation_delta = 0.008
     trailing_stop_trailing_delta = 0.003
 
-    candles = [CandlesFactory.get_candle(connector=exchange,
-                                         trading_pair=trading_pair,
-                                         interval="3m", max_records=150)]
+    candles = [CandlesFactory.get_candle(CandlesConfig(connector=exchange, trading_pair=trading_pair, interval="3m", max_records=1000))]
     markets = {exchange: {trading_pair}}
 
     def get_signal(self):
