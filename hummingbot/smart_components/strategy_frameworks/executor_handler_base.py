@@ -160,6 +160,9 @@ class ExecutorHandlerBase:
             accuracy_long = correct_long / total_long if total_long > 0 else 0
             accuracy_short = correct_short / total_short if total_short > 0 else 0
 
+            total_volume_quote = executors_with_position["amount"].sum() * (executors_with_position["entry_price"].mean() + executors_with_position["close_price"].mean())
+            net_pnl_pct = net_pnl_quote / total_volume_quote
+
             close_types = executors_df.groupby("close_type")["timestamp"].count()
             return {
                 "net_pnl": net_pnl,
@@ -172,6 +175,8 @@ class ExecutorHandlerBase:
                 "close_types": close_types,
                 "accuracy_long": accuracy_long,
                 "accuracy_short": accuracy_short,
+                "total_volume_quote": total_volume_quote,
+                "net_pnl_pct": net_pnl_pct,
             }
         return {
             "net_pnl": 0,
@@ -184,6 +189,8 @@ class ExecutorHandlerBase:
             "close_types": 0,
             "accuracy_long": 0,
             "accuracy_short": 0,
+            "total_volume_quote": 0,
+            "net_pnl_pct": 0,
         }
 
     def closed_executors_info(self):
@@ -220,10 +227,16 @@ class ExecutorHandlerBase:
         accuracy_short = closed_executors_info["accuracy_short"]
         total_accuracy = (accuracy_long * total_long + accuracy_short * total_short) \
             / (total_long + total_short) if (total_long + total_short) > 0 else 0
+        
+        realized_pnl_pct = closed_executors_info["net_pnl_pct"]
+        realized_volume_quote = closed_executors_info["total_volume_quote"]
+        
         lines.extend([f"""
 | Unrealized PNL: {unrealized_pnl * 100:.2f} % | Realized PNL: {realized_pnl * 100:.2f} % | Total PNL: {total_pnl * 100:.2f} % | Total Volume: {total_volume}
 | Total positions: {total_short + total_long} --> Accuracy: {total_accuracy:.2%}
     | Long: {total_long} --> Accuracy: {accuracy_long:.2%} | Short: {total_short} --> Accuracy: {accuracy_short:.2%}
+
+| Realized PNL: {realized_pnl_pct * 100:.2f} % | Realized Volume Quote: {realized_volume_quote}
 
 Closed executors: {closed_executors_info["total_executors"]}
     {closed_executors_info["close_types"]}
